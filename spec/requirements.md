@@ -1,6 +1,6 @@
 # Requirements: Insurance Plan RAG Query Engine (v1)
 
-Status: broad requirements locked. The design and task breakdown will be regenerated from this document.
+Status: locked after design review. `design.md` implements this document.
 
 ## 1. Problem statement
 POSP agents, whose familiarity with health and life products varies, spend too long finding and comparing plan facts across insurer brochures, and risk mis-stating those facts to customers.
@@ -14,80 +14,106 @@ POSP agents, whose familiarity with health and life products varies, spend too l
 3. Live, in the middle of a customer conversation
 4. Handling a customer's follow-up or objection later
 
+**Channel:** the PBPartners agent app, on mobile and web. For v1 the engine is a backend service. The agent-facing experience is a React Native (Expo) prototype that serves as the reference for the PBPartners app team.
+
 ## 3. Scope
 **In scope for v1**
 - Questions about a single plan
 - Questions across plans: "which plans cover X?"
 - Differences between named plans: "what's different between A and B?"
-- Side-by-side comparison of 2–3 named plans
+- Side-by-side comparison of 2–3 named plans within one product
 - Health and life brochures
 
 **Out of scope for v1**
 - Suitability checks, customer-profile matching, and recommendations
+- Comparisons across products (health against life)
 - Any source other than insurer brochures, including policy wordings, CIS, prospectus, and general knowledge
 - Premium quotes or estimates
 - Older brochure versions
+- Scanned PDFs
+- A web prototype of the agent-facing experience
 
 ## 4. Functional requirements
 These use the EARS format: WHEN / IF / THE SYSTEM SHALL.
 
 ### R1. Question types
 - **R1.1** WHEN an agent asks about a named plan, THE SYSTEM SHALL answer from that plan's brochure.
-- **R1.2** WHEN an agent asks which plans cover or offer something, THE SYSTEM SHALL check every uploaded plan, optionally narrowed by line of business or insurer, and SHALL list the plans whose brochure states it.
+- **R1.2** WHEN an agent asks which plans cover or offer something, THE SYSTEM SHALL check every uploaded plan in scope, optionally narrowed by product or insurer, and SHALL list the plans whose brochure states it.
 - **R1.3** WHEN an agent asks what differs between named plans, THE SYSTEM SHALL list the factual differences and SHALL NOT declare a better plan.
-- **R1.4** WHEN an agent requests a side-by-side of 2–3 named plans, THE SYSTEM SHALL present the same attributes for every plan (see Open item O1).
-- **R1.5** IF a question asks for a recommendation or suitability judgement (for example, "which plan is best for my customer?"), THE SYSTEM SHALL decline and offer the factual question it can answer instead.
+- **R1.4** WHEN an agent requests a side-by-side of 2–3 named plans, THE SYSTEM SHALL show the same rows for every plan: the default row list for that product, plus any rows the agent asks for.
+- **R1.5** IF the plans named in a comparison belong to different products, THE SYSTEM SHALL decline with a fixed message stating that comparisons must stay within one product.
+- **R1.6** IF a question asks for a recommendation or suitability judgement, THE SYSTEM SHALL decline and offer the factual question it can answer instead.
 
-### R2. Grounding and honesty
-- **R2.1** THE SYSTEM SHALL answer only from the content of uploaded brochures.
-- **R2.2** THE SYSTEM SHALL cite the plan and page number for every fact it states.
-- **R2.3** IF a brochure does not mention something, THE SYSTEM SHALL say the brochure does not mention it, and SHALL NOT state or imply that it is not covered.
-- **R2.4** In any comparison, IF a brochure does not state a value, THE SYSTEM SHALL show "not stated" and SHALL NOT infer the value.
-- **R2.5** THE SYSTEM SHALL NOT combine facts from different plans into a single statement.
-- **R2.6** IF the system is not confident an answer is supported by the brochure, THE SYSTEM SHALL refuse rather than give a best-effort answer.
-- **R2.7** WHEN refusing, THE SYSTEM SHALL name the closest related content the brochure does contain, with its page, when such content exists.
-- **R2.8** THE SYSTEM SHALL use plain language while keeping the brochure's exact figures, limits, and defined terms.
+### R2. Plan identification
+- **R2.1** THE SYSTEM SHALL accept plans either as IDs from a structured selector, or named in free text.
+- **R2.2** WHEN plans are named in free text, THE SYSTEM SHALL match them against the uploaded plans.
+- **R2.3** IF a plan name matches more than one uploaded plan, THE SYSTEM SHALL ask the agent which plan was meant, and SHALL NOT pick one itself.
+- **R2.4** IF plan IDs are supplied, THEY SHALL override any plan named in the text.
+- **R2.5** Every answer SHALL state which plans it is answering for (for example, "Answering for: Optima Secure, HDFC ERGO").
 
-### R3. Source of truth and versioning
-- **R3.1** Insurer brochures SHALL be the only source of truth.
-- **R3.2** WHEN a new version of a plan's brochure is uploaded, THE SYSTEM SHALL replace the previous version, and only the latest version SHALL be used to answer. No answer SHALL mix content from two versions.
-- **R3.3** Every answer SHALL show the version and date of each brochure it cites (see Open item O2).
+### R3. Grounding and honesty
+- **R3.1** THE SYSTEM SHALL answer only from the content of uploaded brochures.
+- **R3.2** THE SYSTEM SHALL cite the plan and page number for every fact it states.
+- **R3.3** IF a brochure does not mention something, THE SYSTEM SHALL NOT state or imply that it is not covered. Only content in a brochure's exclusions SHALL be described as excluded.
+- **R3.4** In a named-plan comparison, THE SYSTEM SHALL show "not stated" only after checking the entire brochure, and SHALL NOT infer a missing value.
+- **R3.5** For single-plan and cross-plan questions, IF search does not find the information, THE SYSTEM SHALL say it could not find it, and SHALL NOT claim that the brochure does not state it.
+- **R3.6** THE SYSTEM SHALL NOT combine facts from different plans into a single statement.
+- **R3.7** IF the system is not confident an answer is supported by the brochure, THE SYSTEM SHALL refuse rather than give a best-effort answer.
+- **R3.8** WHEN it cannot find information, THE SYSTEM SHALL:
+  - (a) offer to open the brochure at the most relevant page it did find
+  - (b) show the next 2 most relevant passages, quoted verbatim with their pages and labelled as possibly not answering the question
+  - (c) apply every rule in R6 to those passages
+- **R3.9** Comparison cells SHALL use the brochure's own wording, with the page.
+- **R3.10** THE SYSTEM SHALL use plain language while keeping the brochure's exact figures, limits, and defined terms.
+- **R3.11** Non-answers (could not find, no brochure, declined, ambiguous plan, cross-product comparison) SHALL use fixed message templates and SHALL NOT be generated by a model.
 
-### R4. Corpus scope
-- **R4.1** Cross-plan answers SHALL state the set they searched, for example "among the 6 uploaded health plans".
-- **R4.2** IF an agent asks about a plan that has not been uploaded, THE SYSTEM SHALL say it has no brochure for that plan, and SHALL NOT answer from any other source.
+### R4. Source of truth and versioning
+- **R4.1** Insurer brochures SHALL be the only source of truth.
+- **R4.2** WHEN a new brochure is uploaded for an existing plan, THE SYSTEM SHALL replace the previous version, and only the latest version SHALL be used to answer. No answer SHALL mix content from two versions.
+- **R4.3** THE SYSTEM SHALL extract any version identifiers and dates printed in the brochure (such as the UIN, a date, or a version code), and SHALL record the upload date automatically. The uploader SHALL NOT be required to enter either.
+- **R4.4** Every answer SHALL show, for each brochure it cites, the version and date printed in the brochure (or "not printed" where there is none) and the upload date, labelled so the two cannot be confused.
 
-### R5. Neutrality
-- **R5.1** THE SYSTEM SHALL NOT rate, rank, or score plans or insurers.
-- **R5.2** Lists of plans SHALL appear in a neutral order, such as alphabetical, that does not suggest a preference.
+### R5. Corpus scope
+- **R5.1** Cross-plan answers SHALL state the set they searched, for example "among the 6 uploaded health plans".
+- **R5.2** IF an agent names a plan that has not been uploaded, THE SYSTEM SHALL say it has no brochure for that plan, and SHALL NOT answer from any other source.
 
-### R6. Prohibited content
+### R6. Neutrality and prohibited content
 THE SYSTEM SHALL NOT do any of the following:
-- **R6.1** Quote or estimate premiums, including sample premiums or benefit illustrations printed in brochures.
-- **R6.2** Promise, predict, or imply claim outcomes.
-- **R6.3** Answer from general knowledge. This includes explaining an insurance term the brochure does not define.
+- **R6.1** Rate, rank, or score plans or insurers. Plan lists SHALL appear in a neutral order, such as alphabetical.
+- **R6.2** Quote or estimate premiums, including sample premiums or benefit illustrations printed in brochures.
+- **R6.3** Promise, predict, or imply claim outcomes.
+- **R6.4** Answer from general knowledge. This includes explaining an insurance term the brochure does not define.
 
 ### R7. Terms and definitions
-- **R7.1** WHEN an agent asks what a term means for a plan, and that plan's brochure defines the term, THE SYSTEM SHALL give the brochure's definition with a citation.
-- **R7.2** IF the brochure does not define the term, THE SYSTEM SHALL say so (per R2.3 and R6.3).
+- **R7.1** WHEN an agent asks what a term means for a plan, and that plan's brochure defines the term, THE SYSTEM SHALL give the brochure's definition with a citation. Otherwise it SHALL respond as in R3.5.
 
 ### R8. Answer shape
-- **R8.1** Every answer SHALL lead with a direct answer that can be read in a few seconds, followed by the supporting detail. This serves both live use and prep.
+- **R8.1** Every answer SHALL lead with a direct answer that can be read in a few seconds, followed by the supporting detail.
 
-### R9. Brochure management
-- **R9.1** An authorised user SHALL be able to upload, replace, list, and delete plan brochures.
-- **R9.2** Each plan SHALL be identified by an ID supplied by the host app.
+### R9. Plan catalogue and selector
+- **R9.1** THE SYSTEM SHALL provide the lists behind the product → insurer → plan selector, built only from uploaded plans:
+  - products that have uploaded plans
+  - insurers with uploaded plans in a given product
+  - uploaded plans for a given insurer and product
+- **R9.2** The lists SHALL update automatically when a brochure is uploaded or deleted.
 
-### R10. Integration
-- **R10.1** THE SYSTEM SHALL be consumed by the existing host app through an API.
+### R10. Brochure management
+- **R10.1** An authorised user SHALL be able to upload, replace, list, and delete plan brochures, identifying each plan by an ID.
+- **R10.2** IF a PDF has no extractable text (scanned), THE SYSTEM SHALL reject it.
+- **R10.3** For life brochures, THE SYSTEM SHALL exclude illustrative examples (worked customer scenarios and sample illustrations) from the index. The upload response SHALL list every excluded passage with its page.
+- **R10.4** An authorised user SHALL be able to view and edit the default comparison row list for each product.
+
+### R11. Brochure viewing
+- **R11.1** THE SYSTEM SHALL provide any brochure page as an image, and the full brochure file, so the app can show a page without a PDF viewer.
 
 ## 5. Non-functional requirements
-- **NFR1 Accuracy first:** whenever accuracy and coverage conflict, accuracy wins.
-- **NFR2 Speed:** answers SHALL be fast enough for use during a live conversation. Proposed target: p95 under 4 seconds for a single-plan question.
+- **NFR1 Accuracy first:** whenever accuracy and coverage or speed conflict, accuracy wins.
+- **NFR2 Speed:** answers SHALL be fast enough for use during a live conversation. Proposed target: p95 under 4 seconds for a single-plan question, and under 10 seconds for a 3-plan comparison.
 - **NFR3 Cost:** the system SHALL run at the lowest workable cost, with no paid fixed infrastructure in v1.
-- **NFR4 Auditability:** THE SYSTEM SHALL log every question with its answer, the sources cited, and the brochure versions used.
-- **NFR5 Environment:** the system SHALL be developable and runnable in GitHub Codespaces.
-- **NFR6 Swappability:** the model and storage providers SHALL be replaceable without rewriting the system.
+- **NFR4 Auditability:** THE SYSTEM SHALL log every question with its answer, the sources cited, the brochure versions used, and the models used.
+- **NFR5 Environment:** the engine SHALL be developable and runnable in GitHub Codespaces, and reachable from a phone during prototyping.
+- **NFR6 Swappability:** the model for each role (labelling and answering) SHALL be switchable through configuration alone, including to self-hosted OpenAI-compatible endpoints. The embedding model and storage SHALL also be replaceable without rewriting the system.
+- **NFR7 Handoff:** the API SHALL be documented well enough for the PBPartners app team to build native screens against it without reading the engine code.
 
 ## 6. Success measures, in priority order
 Targets are proposed and will be confirmed before evaluation.
@@ -95,14 +121,15 @@ Targets are proposed and will be confirmed before evaluation.
 | # | Measure | Proposed target |
 |---|---|---|
 | 1 | Accuracy: stated facts that are correct and correctly cited | ≥ 98% |
-| 1a | "Not mentioned" is never phrased as "not covered" | 100% |
+| 1a | Absence never phrased as exclusion (R3.3) | 100% |
 | 1b | Correct refusal on questions the brochures cannot answer | ≥ 90% |
-| 2 | Time saved: a question answered faster than finding it manually in the brochure | Measured in pilot |
+| 1c | Correct plan identification from free text | ≥ 98% |
+| 2 | Time saved compared with finding the answer manually in the brochure | Measured in pilot |
 | 3 | Adoption: agents using it repeatedly | Measured in pilot |
 | 4 | Pitch and conversion outcomes | Observed, not a v1 gate |
 
 ## 7. Open items
-- **O1:** The attribute set for side-by-side comparisons. Options are a fixed list per line of business, agent-chosen attributes, or both.
-- **O2:** Where the brochure version and date come from: entered at upload, read from the brochure itself (UIN or date in the footer), or both.
-- **O3:** The v1 pilot corpus, meaning which plans and insurers get uploaded first.
-- **O4:** Confirmation of the targets in section 6.
+- **O1:** The content of the default comparison row list for health and for life. You author this; the design only provides the mechanism.
+- **O2:** The v1 pilot corpus, meaning which plans and insurers get uploaded first.
+- **O3:** Confirmation of the targets in section 6.
+- **O4:** The QA-env model API format, and whether a codespace can reach it over the network.
